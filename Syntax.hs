@@ -40,4 +40,5 @@ eval_act (Seq e1 e2) = do
   eval_act e1 ; eval_act e2
 
 eval c e = evalState (eval_act e) c
-    
+
+
