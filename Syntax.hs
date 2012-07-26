@@ -103,7 +103,7 @@ eval c e = do
   res <- runErrorT (evalStateT (eval_act e) c) 
   return res
 
---- Free variables ---
+--- Free variables --- TODO Wrong missing shifts!!
 
 type FreeResult = State Index [Index]
 
