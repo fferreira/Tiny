@@ -158,4 +158,11 @@ walk action e c = evalStateT (walker action e) 0
 
 --- Closure Conversion ---
 
+-- cc_act f@(Fn n b) | free f == [] = f
+-- cc_act f@(Fn n b) = 
+--     (Fn (n + num_fv) (shift_or_replace b)) 
+--         where
+--           fv = free f
+--           num_fv = length fv
 
+--           shift_or_replace (Var x) = undefined
