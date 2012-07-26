@@ -43,9 +43,13 @@ eval_act (App f params) = do
   params' <- mapM eval_act params
   f' <- eval_act f
   apply_fn f' params'
-    where apply_fn (Fn xs b) params'  = do
-            c <- get ; mapM (\(x, p) -> put ((x, p):c)) (zip xs params')
-            r <- eval_act b ; put c ; return r
+    where apply_fn (Fn xs b) params'  = 
+            if length xs == length params' then
+              do
+                c <- get ; mapM (\(x, p) -> put ((x, p):c)) (zip xs params')
+                r <- eval_act b ; put c ; return r
+            else
+              throwError "Too many/little parameters for application"
           apply_fn _ _ = throwError "Applying something that is not a function"
 eval_act (Def x e) = do
   e' <- eval_act e
@@ -58,5 +62,3 @@ eval c e = do
   res <- runErrorT (evalStateT (eval_act e) c) 
   return res
 
-zipM :: Monad m => (a -> b -> m (a, b)) -> [a] -> [b] -> m [(a, b)]
-zipM f (a:as) (b:bs) = undefined
