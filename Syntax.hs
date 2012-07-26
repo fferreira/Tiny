@@ -40,6 +40,11 @@ sample3 = App f2 [Value (Num 14), Value (Num 15)]
 
 sample4 = Seq (Def f2) (App (Var 0) [Value (Num 42), Value (Num 43)])
 
+partial_app = Seq (Def (Fn 2 (Pair (Var 0) (Var 1))))
+              (App (Var 0) [Value (Num 14)])
+
+curried = Seq (Def (Fn 2 (Pair (Var 0) (Var 1))))
+        (App (App (Var 0) [Value (Num 14)]) [Value (Num 42)])
 
 --- The evaluator ---
 
@@ -60,19 +65,29 @@ eval_act (Fst e) = do e' <- eval_act e
 eval_act (Snd e) = do e' <- eval_act e
                       case e' of Pair _ e2 -> return e2
                                  _ -> throwError "Snd of something other than a pair"
-eval_act (Var x) = do c <- get ; return (c !! x)
+eval_act (Var x) = do c <- get 
+                      if x < (length c) then return (c !! x)
+                      else throwError "Invalid variable" 
 eval_act (App f params) = do
   params' <- mapM eval_act params
   f' <- eval_act f
   apply_fn f' params'
-    where apply_fn (Fn n b) params'  = 
-            if n == length params' then
-              do
-                c <- get ; modify (\c -> params' ++ c) 
-                r <- eval_act b ; put c ; return r
-            else
-              throwError "Too many/little parameters for application"
-          apply_fn _ _ = throwError "Applying something that is not a function"
+    where 
+      apply_fn (Fn n b) p | n == length p  = 
+                          do
+                            c <- get ; modify (\c -> p ++ c) 
+                            r <- eval_act b ; put c ; return r
+      apply_fn (Fn n b) p | n > length p  = 
+                          return $ Clo p (Fn n b)
+      apply_fn (Fn n b) p = 
+              throwError "Too many parameters for application"
+      apply_fn (Clo n (Fn n' b)) p | n' == length n + length p =
+                          apply_fn (Fn n' b) (n ++ p)
+      apply_fn (Clo n (Fn n' b)) p | n' > length n + length p  =
+                          return $ Clo (n ++ p) (Fn n' b)
+      apply_fn (Clo n (Fn n' b)) p =
+              throwError "Too many parameters for closure application"
+      apply_fn _ _ = throwError "Applying something that is not a function"
 eval_act (Def e) = do
   e' <- eval_act e
   modify (\c -> e':c)
