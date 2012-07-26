@@ -1,6 +1,7 @@
 module Syntax where
 
-import Control.Monad.State
+import Control.Monad.State(StateT, evalStateT, put, get, modify, gets)
+import Control.Monad.Error(ErrorT, throwError, runErrorT)
 
 data Value = Num Integer deriving (Eq, Show)
 
@@ -21,24 +22,33 @@ sample2 = Seq (Def "id" id_function) (App (Var "id") (Value (Num 42)))
 
 type Ctx a = [(a, Expr a)]
 
+type Error = ErrorT String IO
+type Result a = StateT (Ctx a) Error (Expr a)
+
+eval_act :: (Show a, Eq a) => Expr a -> Result a
 eval_act v@(Value _) = return v
 eval_act f@(Fn _ _) = return f
-eval_act (Var x) = do
-  c <- get ;
-  return (case lookup x c of Just v -> v)
+eval_act (Var x) = do 
+  v <- gets (\c -> lookup x c)
+  case v of Just v -> return v
+            Nothing -> throwError "Unbound Variable"
 eval_act (App e1 e2) = do
-  e2' <- eval_act e2 ; Fn x b <- eval_act e1
-  c <- get
-  put ((x, e2'):c) ; r <- eval_act b ; put c
-  return r
+  e2' <- eval_act e2
+  e1' <- eval_act e1
+  apply_fn e1' e2'
+    where apply_fn (Fn x b) e2'  = do
+               c <- get ; put ((x, e2'):c)
+               r <- eval_act b ; put c ; return r
+          apply_fn _ _ = throwError "Applying something that is not a function"
 eval_act (Def x e) = do
   e' <- eval_act e
-  c <- get
-  put ((x, e'):c)
+  modify (\c -> (x, e'):c)
   return e'
 eval_act (Seq e1 e2) = do
   eval_act e1 ; eval_act e2
 
-eval c e = evalState (eval_act e) c
+eval c e = do
+  res <- runErrorT (evalStateT (eval_act e) c) 
+  return res
 
 

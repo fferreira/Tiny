@@ -3,5 +3,6 @@ module Main where
 import Syntax
 
 main = do 
-  putStr (show (eval [] sample2)) 
+  res <- eval [] sample2
+  putStr (show res)
   putChar '\n'
