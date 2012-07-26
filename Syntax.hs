@@ -2,77 +2,68 @@ module Syntax where
 
 import Data.List(delete, deleteBy)
 import Char(ord, chr)
-import Control.Monad.State(StateT, evalStateT, put, get, modify, gets)
+import Control.Monad.State(State, StateT, evalState, evalStateT, put, get, modify, gets)
 import Control.Monad.Error(ErrorT, throwError, runErrorT)
 
---- Binders ---
+--- De Bruijn indices ---
 
-class (Eq a, Show a) => Name a where
-    genSym :: [a] -> a
-
-instance Name Integer where
-    genSym ns = 1 + foldr (\i -> \m -> max i m) 0 ns
-
-newtype N = N String deriving (Show, Eq, Ord)
-instance Name N where
-    genSym ns = inc $ foldr (\i -> \m -> max i m) (N "") ns
-        where inc (N []) = N "n"
-              inc (N (n:ns)) = N (nextChar n ++ ns)
-              nextChar c = if ord c >= (ord 'z') then "a"++ [c] 
-                           else [chr (1 + (ord c))]
+type Index = Int
 
 --- The language ---
 
-data Value = Num Integer | Nil deriving (Eq, Show)
+data Value = Num Index | Nil deriving (Eq, Show)
 
-data Name a => Expr a =
+data Expr =
   Value Value
-  | App (Expr a) [(Expr a)]
-  | Fn [a] (Expr a)
-  | Var a
-  | Def a (Expr a)
-  | Seq (Expr a) (Expr a)
-  | Clo (Ctx a) (Expr a) -- for closure conversion
+  | App Expr [Expr]
+  | Fn Index Expr -- bad code smell should be the number of vars
+  | Var Index
+  | Def Expr
+  | Seq Expr Expr
+  | Clo Ctx Expr -- for closure conversion
   deriving (Eq, Show)
 
 --- Some examples ---
 
-id_function = (Fn [N "x"] (Var (N"x")))
+id_function = (Fn 1 (Var 0))
 
-sample = App id_function [(Value (Num 14))]
+sample = App id_function [Value (Num 14)]
 
-sample2 = Seq (Def (N "id") id_function) (App (Var (N "id")) [(Value (Num 42))])
+sample2 = Seq (Def id_function) (App (Var 0) [Value (Num 42)])
+
+f2 = (Fn 2 (Var 0))
+
+sample3 = App f2 [Value (Num 14), Value (Num 15)]
+
+sample4 = Seq (Def f2) (App (Var 0) [Value (Num 42), Value (Num 43)])
 
 
 --- The evaluator ---
 
-type Ctx a = [(a, Expr a)]
+type Ctx = [Expr]
 
 type WithError = ErrorT String IO
-type EvalResult a = StateT (Ctx a) WithError (Expr a)
+type EvalResult = StateT Ctx WithError Expr
 
-eval_act :: Name a => Expr a -> EvalResult a
+eval_act :: Expr -> EvalResult
 eval_act v@(Value _) = return v
 eval_act f@(Fn _ _) = return f
-eval_act (Var x) = do 
-  v <- gets (\c -> lookup x c)
-  case v of Just v -> return v
-            Nothing -> throwError "Unbound Variable"
+eval_act (Var x) = do c <- get ; return (c !! x)
 eval_act (App f params) = do
   params' <- mapM eval_act params
   f' <- eval_act f
   apply_fn f' params'
-    where apply_fn (Fn xs b) params'  = 
-            if length xs == length params' then
+    where apply_fn (Fn n b) params'  = 
+            if n == length params' then
               do
-                c <- get ; mapM (\(x, p) -> put ((x, p):c)) (zip xs params')
+                c <- get ; modify (\c -> params' ++ c) 
                 r <- eval_act b ; put c ; return r
             else
               throwError "Too many/little parameters for application"
           apply_fn _ _ = throwError "Applying something that is not a function"
-eval_act (Def x e) = do
+eval_act (Def e) = do
   e' <- eval_act e
-  modify (\c -> (x, e'):c)
+  modify (\c -> e':c)
   return e'
 eval_act (Seq e1 e2) = do
   eval_act e1 ; eval_act e2
@@ -85,47 +76,49 @@ eval c e = do
   res <- runErrorT (evalStateT (eval_act e) c) 
   return res
 
---- Tree walk with context ---
+--- Free variables ---
 
-type WalkResult a = StateT (Ctx a) (Either a) (Expr a)
+type FreeResult = State Index [Index]
 
-walker :: Name a => (Expr a -> WalkResult a) -> Expr a -> WalkResult a
+free_act :: Expr -> State Index [Index]
+free_act v@(Value _) = return []
+free_act (App f params) = do ff <- free_act f
+                             fp <- mapM free_act params
+                             return (ff ++ concat fp)
+free_act (Fn n b) = do c <- get ; modify (\c -> c + 1) 
+                       free_act b
+free_act (Var v) = do c <- get ; return (if v >= c then [v] else [])
+free_act (Def e) = do f <- free_act e ; modify (\c -> c + 1) ; return f
+free_act (Seq e1 e2) = do f1 <- free_act e1 ; f2 <- free_act e2 ; return (f1 ++ f2)
+free_act (Clo c' e) = do modify (\c -> c + (length c')) ; free_act e
+
+free e = evalState (free_act e) 0
+
+--- Tree walk with context length ---
+
+type WalkResult = StateT Index (Either String) Expr
+
+walker :: (Expr -> WalkResult) -> Expr -> WalkResult
 walker f v@(Value _) = f v
 walker f (App e1 e2) = do e1' <- f e1; 
                           e2' <- mapM f e2; 
                           f (App e1' e2')
-walker f (Fn xs b) = do b' <- f b ; f (Fn xs b')
+walker f (Fn n b) = do c <- get ; modify (\c -> c + n) 
+                       b' <- f b ; put c
+                       f (Fn n b')
 walker f v@(Var x) = f v
-walker f (Def x e) = do e' <- f e ; f (Def x e')
+walker f (Def e) = do e' <- f e 
+                      r <- f (Def e')
+                      modify (\c -> c + 1) 
+                      return r
 walker f (Seq e1 e2) = do e1' <- f e1 ; e2' <- f e2 ; f (Seq e1' e2')
-walker f (Clo c' e2) = do c <- get ; modify (\c -> c' ++ c)
-                          e2' <- f e2 ; put c ; f (Clo c' e2')
+walker f (Clo c' e2) = do c <- get ; modify (\c -> c + (length c'))
+                          e2' <- f e2 ; put c ; f (Clo c' e2') -- put?
 
 id_action e = do c <- get ; return e
 
-walk action e ctx = evalStateT (walker action e) ctx
+walk action e c = evalStateT (walker action e) 0
+
 
 --- Closure Conversion ---
-  
-free_vars :: Name a => Expr a -> [a]
-free_vars (Value _) = []
-free_vars (Fn xs b) = filter (\x -> not $ x `elem` xs) (free_vars b)
-free_vars (Var x) = [x]
-free_vars (App f params) = free_vars f ++ concatMap free_vars params
-free_vars (Def x e) = delete x (free_vars e)
-free_vars (Seq e1 e2) = 
-    (free_vars e1) ++ (filter 
-                       (\x -> not $ x `elem` (defined_vars e1)) 
-                       (free_vars e2))
-    where
-      defined_vars (Def x e) = x : (defined_vars e)
-      defined_vars (App f params) = (defined_vars f) ++ 
-                                    (concatMap defined_vars params)
-      defined_vars _ = []
-free_vars (Clo c' e) = filter (\x -> not $ x `elem` (fst . unzip $ c')) (free_vars e)
 
-
-
-cc :: Name a => Expr a -> Expr a
-cc f@(Fn xs b) = Clo [] f
-cc e = e
