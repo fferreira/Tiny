@@ -14,7 +14,10 @@ type Index = Int
 data Value = Num Index | Nil deriving (Eq, Show)
 
 data Expr =
-  Value Value
+    Value Value
+  | Pair Expr Expr
+  | Fst Expr
+  | Snd Expr
   | App Expr [Expr]
   | Fn Index Expr -- bad code smell should be the number of vars
   | Var Index
@@ -48,6 +51,15 @@ type EvalResult = StateT Ctx WithError Expr
 eval_act :: Expr -> EvalResult
 eval_act v@(Value _) = return v
 eval_act f@(Fn _ _) = return f
+eval_act (Pair e1 e2) = do e1' <- eval_act e1
+                           e2' <- eval_act e2
+                           return (Pair e1' e2')
+eval_act (Fst e) = do e' <- eval_act e
+                      case e' of Pair e1 _ -> return e1
+                                 _ -> throwError "Fst of something other than a pair"
+eval_act (Snd e) = do e' <- eval_act e
+                      case e' of Pair _ e2 -> return e2
+                                 _ -> throwError "Snd of something other than a pair"
 eval_act (Var x) = do c <- get ; return (c !! x)
 eval_act (App f params) = do
   params' <- mapM eval_act params
@@ -82,6 +94,9 @@ type FreeResult = State Index [Index]
 
 free_act :: Expr -> State Index [Index]
 free_act v@(Value _) = return []
+free_act (Pair e1 e2) = do f1 <- free_act e1 ; f2 <- free_act e2 ; return (f1 ++ f2)
+free_act (Fst e) = free_act e
+free_act (Snd e) = free_act e
 free_act (App f params) = do ff <- free_act f
                              fp <- mapM free_act params
                              return (ff ++ concat fp)
@@ -100,6 +115,13 @@ type WalkResult = StateT Index (Either String) Expr
 
 walker :: (Expr -> WalkResult) -> Expr -> WalkResult
 walker f v@(Value _) = f v
+walker f (Pair e1 e2) = do e1' <- f e1
+                           e2' <- f e2
+                           f (Pair e1' e2')
+walker f (Fst e) = do e' <- f e
+                      f (Fst e')
+walker f (Snd e) = do e' <- f e
+                      f (Snd e')
 walker f (App e1 e2) = do e1' <- f e1; 
                           e2' <- mapM f e2; 
                           f (App e1' e2')
@@ -119,6 +141,6 @@ id_action e = do c <- get ; return e
 
 walk action e c = evalStateT (walker action e) 0
 
-
 --- Closure Conversion ---
+
 
