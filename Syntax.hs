@@ -1,5 +1,6 @@
 module Syntax where
 
+import Data.List(delete, deleteBy)
 import Control.Monad.State(StateT, evalStateT, put, get, modify, gets)
 import Control.Monad.Error(ErrorT, throwError, runErrorT)
 
@@ -30,8 +31,8 @@ sample2 = Seq (Def "id" id_function) (App (Var "id") [(Value (Num 42))])
 
 type Ctx a = [(a, Expr a)]
 
-type Error = ErrorT String IO
-type Result a = StateT (Ctx a) Error (Expr a)
+type WithError = ErrorT String IO
+type Result a = StateT (Ctx a) WithError (Expr a)
 
 eval_act :: (Show a, Eq a) => Expr a -> Result a
 eval_act v@(Value _) = return v
@@ -67,3 +68,13 @@ eval c e = do
   res <- runErrorT (evalStateT (eval_act e) c) 
   return res
 
+--- Closure Conversion ---
+  
+free_vars :: (Show a, Eq a) => Expr a -> [a]
+free_vars (Value _) = []
+free_vars (Fn xs b) = filter (\x -> not $ x `elem` xs) (free_vars b)
+free_vars (Var x) = [x]
+free_vars (App f params) = free_vars f ++ concatMap free_vars params
+free_vars (Def x e) = delete x (free_vars e)
+free_vars (Seq e1 e2) = (free_vars e1) ++ (free_vars e2)
+free_vars (Clo c' e) = filter (\x -> not $ x `elem` (fst . unzip $ c')) (free_vars e)
