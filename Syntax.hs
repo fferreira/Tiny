@@ -1,14 +1,31 @@
 module Syntax where
 
 import Data.List(delete, deleteBy)
+import Char(ord, chr)
 import Control.Monad.State(StateT, evalStateT, put, get, modify, gets)
 import Control.Monad.Error(ErrorT, throwError, runErrorT)
+
+--- Binders ---
+
+class (Eq a, Show a) => Name a where
+    genSym :: [a] -> a
+
+instance Name Integer where
+    genSym ns = 1 + foldr (\i -> \m -> max i m) 0 ns
+
+newtype N = N String deriving (Show, Eq, Ord)
+instance Name N where
+    genSym ns = inc $ foldr (\i -> \m -> max i m) (N "") ns
+        where inc (N []) = N "n"
+              inc (N (n:ns)) = N (nextChar n ++ ns)
+              nextChar c = if ord c >= (ord 'z') then "a"++ [c] 
+                           else [chr (1 + (ord c))]
 
 --- The language ---
 
 data Value = Num Integer | Nil deriving (Eq, Show)
 
-data (Eq a, Show a) => Expr a =
+data Name a => Expr a =
   Value Value
   | App (Expr a) [(Expr a)]
   | Fn [a] (Expr a)
@@ -20,11 +37,11 @@ data (Eq a, Show a) => Expr a =
 
 --- Some examples ---
 
-id_function = (Fn ["x"] (Var "x"))
+id_function = (Fn [N "x"] (Var (N"x")))
 
 sample = App id_function [(Value (Num 14))]
 
-sample2 = Seq (Def "id" id_function) (App (Var "id") [(Value (Num 42))])
+sample2 = Seq (Def (N "id") id_function) (App (Var (N "id")) [(Value (Num 42))])
 
 
 --- The evaluator ---
@@ -34,7 +51,7 @@ type Ctx a = [(a, Expr a)]
 type WithError = ErrorT String IO
 type EvalResult a = StateT (Ctx a) WithError (Expr a)
 
-eval_act :: (Show a, Eq a) => Expr a -> EvalResult a
+eval_act :: Name a => Expr a -> EvalResult a
 eval_act v@(Value _) = return v
 eval_act f@(Fn _ _) = return f
 eval_act (Var x) = do 
@@ -72,7 +89,7 @@ eval c e = do
 
 type WalkResult a = StateT (Ctx a) (Either a) (Expr a)
 
-walker :: (Show a, Eq a) => (Expr a -> WalkResult a) -> Expr a -> WalkResult a
+walker :: Name a => (Expr a -> WalkResult a) -> Expr a -> WalkResult a
 walker f v@(Value _) = f v
 walker f (App e1 e2) = do e1' <- f e1; 
                           e2' <- mapM f e2; 
@@ -90,7 +107,7 @@ walk action e ctx = evalStateT (walker action e) ctx
 
 --- Closure Conversion ---
   
-free_vars :: (Show a, Eq a) => Expr a -> [a]
+free_vars :: Name a => Expr a -> [a]
 free_vars (Value _) = []
 free_vars (Fn xs b) = filter (\x -> not $ x `elem` xs) (free_vars b)
 free_vars (Var x) = [x]
@@ -109,6 +126,6 @@ free_vars (Clo c' e) = filter (\x -> not $ x `elem` (fst . unzip $ c')) (free_va
 
 
 
-cc :: (Show a, Eq a) => Expr a -> Expr a
+cc :: Name a => Expr a -> Expr a
 cc f@(Fn xs b) = Clo [] f
 cc e = e
