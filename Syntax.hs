@@ -76,5 +76,13 @@ free_vars (Fn xs b) = filter (\x -> not $ x `elem` xs) (free_vars b)
 free_vars (Var x) = [x]
 free_vars (App f params) = free_vars f ++ concatMap free_vars params
 free_vars (Def x e) = delete x (free_vars e)
-free_vars (Seq e1 e2) = (free_vars e1) ++ (free_vars e2)
+free_vars (Seq e1 e2) = 
+    (free_vars e1) ++ (filter 
+                       (\x -> not $ x `elem` (defined_vars e1)) 
+                       (free_vars e2))
+    where
+      defined_vars (Def x e) = x : (defined_vars e)
+      defined_vars (App f params) = (defined_vars f) ++ 
+                                    (concatMap defined_vars params)
+      defined_vars _ = []
 free_vars (Clo c' e) = filter (\x -> not $ x `elem` (fst . unzip $ c')) (free_vars e)
