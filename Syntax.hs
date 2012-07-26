@@ -3,6 +3,8 @@ module Syntax where
 import Control.Monad.State(StateT, evalStateT, put, get, modify, gets)
 import Control.Monad.Error(ErrorT, throwError, runErrorT)
 
+--- The language ---
+
 data Value = Num Integer deriving (Eq, Show)
 
 data (Eq a, Show a) => Expr a =
@@ -14,11 +16,16 @@ data (Eq a, Show a) => Expr a =
   | Seq (Expr a) (Expr a)
   deriving (Eq, Show)
     
+--- Some examples ---
+
 id_function = (Fn "x" (Var "x"))
 
 sample = App id_function (Value (Num 14))
 
 sample2 = Seq (Def "id" id_function) (App (Var "id") (Value (Num 42)))
+
+
+--- The evaluator ---
 
 type Ctx a = [(a, Expr a)]
 
