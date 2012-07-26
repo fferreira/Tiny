@@ -5,24 +5,24 @@ import Control.Monad.Error(ErrorT, throwError, runErrorT)
 
 --- The language ---
 
-data Value = Num Integer deriving (Eq, Show)
+data Value = Num Integer | Nil deriving (Eq, Show)
 
 data (Eq a, Show a) => Expr a =
   Value Value
-  | App (Expr a) (Expr a)
-  | Fn a (Expr a)
+  | App (Expr a) [(Expr a)]
+  | Fn [a] (Expr a)
   | Var a
   | Def a (Expr a)
   | Seq (Expr a) (Expr a)
   deriving (Eq, Show)
-    
+
 --- Some examples ---
 
-id_function = (Fn "x" (Var "x"))
+id_function = (Fn ["x"] (Var "x"))
 
-sample = App id_function (Value (Num 14))
+sample = App id_function [(Value (Num 14))]
 
-sample2 = Seq (Def "id" id_function) (App (Var "id") (Value (Num 42)))
+sample2 = Seq (Def "id" id_function) (App (Var "id") [(Value (Num 42))])
 
 
 --- The evaluator ---
@@ -39,13 +39,13 @@ eval_act (Var x) = do
   v <- gets (\c -> lookup x c)
   case v of Just v -> return v
             Nothing -> throwError "Unbound Variable"
-eval_act (App e1 e2) = do
-  e2' <- eval_act e2
-  e1' <- eval_act e1
-  apply_fn e1' e2'
-    where apply_fn (Fn x b) e2'  = do
-               c <- get ; put ((x, e2'):c)
-               r <- eval_act b ; put c ; return r
+eval_act (App f params) = do
+  params' <- mapM eval_act params
+  f' <- eval_act f
+  apply_fn f' params'
+    where apply_fn (Fn xs b) params'  = do
+            c <- get ; mapM (\(x, p) -> put ((x, p):c)) (zip xs params')
+            r <- eval_act b ; put c ; return r
           apply_fn _ _ = throwError "Applying something that is not a function"
 eval_act (Def x e) = do
   e' <- eval_act e
@@ -58,4 +58,5 @@ eval c e = do
   res <- runErrorT (evalStateT (eval_act e) c) 
   return res
 
-
+zipM :: Monad m => (a -> b -> m (a, b)) -> [a] -> [b] -> m [(a, b)]
+zipM f (a:as) (b:bs) = undefined
