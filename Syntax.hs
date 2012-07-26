@@ -32,9 +32,9 @@ sample2 = Seq (Def "id" id_function) (App (Var "id") [(Value (Num 42))])
 type Ctx a = [(a, Expr a)]
 
 type WithError = ErrorT String IO
-type Result a = StateT (Ctx a) WithError (Expr a)
+type EvalResult a = StateT (Ctx a) WithError (Expr a)
 
-eval_act :: (Show a, Eq a) => Expr a -> Result a
+eval_act :: (Show a, Eq a) => Expr a -> EvalResult a
 eval_act v@(Value _) = return v
 eval_act f@(Fn _ _) = return f
 eval_act (Var x) = do 
@@ -68,6 +68,26 @@ eval c e = do
   res <- runErrorT (evalStateT (eval_act e) c) 
   return res
 
+--- Tree walk with context ---
+
+type WalkResult a = StateT (Ctx a) (Either a) (Expr a)
+
+walker :: (Show a, Eq a) => (Expr a -> WalkResult a) -> Expr a -> WalkResult a
+walker f v@(Value _) = f v
+walker f (App e1 e2) = do e1' <- f e1; 
+                          e2' <- mapM f e2; 
+                          f (App e1' e2')
+walker f (Fn xs b) = do b' <- f b ; f (Fn xs b')
+walker f v@(Var x) = f v
+walker f (Def x e) = do e' <- f e ; f (Def x e')
+walker f (Seq e1 e2) = do e1' <- f e1 ; e2' <- f e2 ; f (Seq e1' e2')
+walker f (Clo c' e2) = do c <- get ; modify (\c -> c' ++ c)
+                          e2' <- f e2 ; put c ; f (Clo c' e2')
+
+id_action e = do c <- get ; return e
+
+walk action e ctx = evalStateT (walker action e) ctx
+
 --- Closure Conversion ---
   
 free_vars :: (Show a, Eq a) => Expr a -> [a]
@@ -86,3 +106,9 @@ free_vars (Seq e1 e2) =
                                     (concatMap defined_vars params)
       defined_vars _ = []
 free_vars (Clo c' e) = filter (\x -> not $ x `elem` (fst . unzip $ c')) (free_vars e)
+
+
+
+cc :: (Show a, Eq a) => Expr a -> Expr a
+cc f@(Fn xs b) = Clo [] f
+cc e = e
