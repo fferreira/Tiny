@@ -14,6 +14,7 @@ data (Eq a, Show a) => Expr a =
   | Var a
   | Def a (Expr a)
   | Seq (Expr a) (Expr a)
+  | Clo (Ctx a) (Expr a) -- for closure conversion
   deriving (Eq, Show)
 
 --- Some examples ---
@@ -57,6 +58,10 @@ eval_act (Def x e) = do
   return e'
 eval_act (Seq e1 e2) = do
   eval_act e1 ; eval_act e2
+eval_act (Clo c' e) = do
+  c <- get ; modify (\c -> c' ++ c)
+  res <- eval_act e ; put c
+  return res
 
 eval c e = do
   res <- runErrorT (evalStateT (eval_act e) c) 
