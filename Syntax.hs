@@ -154,7 +154,7 @@ walker f (Clo c' e2) = do c <- get ; modify (\c -> c + (length c'))
 
 id_action e = return e
 
-walk action e c = evalStateT (walker action e) c
+walk action e c = evalStateT (walker action e) c --TODO missing one action overall?
 
 --- Shift ---
 
@@ -181,15 +181,24 @@ subst v e e' = let Right res = walk act e' 0 in res -- it can only be Right
                                else (Var x))
       act e = return e
 
-
+-- WARNING THIS IS NOT A SIMULTANEAOUS SUBST
+subst_many :: [(Index, Expr)] -> Expr -> Expr
+subst_many ((v, e'):ss) e = subst v e' (subst_many ss e)
+subst_many [] e = e
 
 --- Closure Conversion ---
 
--- cc_act f@(Fn n b) | free f == [] = f
--- cc_act f@(Fn n b) = 
---     (Fn (n + num_fv) (shift_or_replace b)) 
---         where
---           fv = free f
---           num_fv = length fv
+cc_act :: Expr -> WalkResult
+cc_act f@(Fn n b) | free f == [] = return f
+cc_act f@(Fn n b) = 
+    return (Clo fv (Fn (n + num_fv) (subst_many
+                             (zip  (take num_fv [0..]) fv)
+                             (shift num_fv b))))
+        where
+          fv = map (\x -> (Var x)) (free f)
+          num_fv = length fv
+cc_act e = return e
 
---           shift_or_replace (Var x) = undefined
+
+cc :: Expr -> Expr
+cc e = let Right res = walk cc_act e 0 in res -- it can only be Right
