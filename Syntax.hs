@@ -103,7 +103,7 @@ eval c e = do
   res <- runErrorT (evalStateT (eval_act e) c) 
   return res
 
---- Free variables --- TODO Wrong missing shifts!!
+--- Free variables ---
 
 type FreeResult = State Index [Index]
 
@@ -115,9 +115,9 @@ free_act (Snd e) = free_act e
 free_act (App f params) = do ff <- free_act f
                              fp <- mapM free_act params
                              return (ff ++ concat fp)
-free_act (Fn n b) = do c <- get ; modify (\c -> c + 1) 
+free_act (Fn n b) = do c <- get ; modify (\c -> c + n) 
                        free_act b
-free_act (Var v) = do c <- get ; return (if v >= c then [v] else [])
+free_act (Var v) = do c <- get ; return (if v >= c then [v - c] else [])
 free_act (Def e) = do f <- free_act e ; modify (\c -> c + 1) ; return f
 free_act (Seq e1 e2) = do f1 <- free_act e1 ; f2 <- free_act e2 ; return (f1 ++ f2)
 free_act (Clo c' e) = do modify (\c -> c + (length c')) ; free_act e
