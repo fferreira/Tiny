@@ -152,9 +152,36 @@ walker f (Seq e1 e2) = do e1' <- f e1 ; e2' <- f e2 ; f (Seq e1' e2')
 walker f (Clo c' e2) = do c <- get ; modify (\c -> c + (length c'))
                           e2' <- f e2 ; put c ; f (Clo c' e2') -- put?
 
-id_action e = do c <- get ; return e
+id_action e = return e
 
-walk action e c = evalStateT (walker action e) 0
+walk action e c = evalStateT (walker action e) c
+
+--- Shift ---
+
+shift :: Index -> Expr -> Expr
+shift s e = 
+    let 
+        Right res = walk act e 0
+    in 
+      res -- it can only be Right
+          where
+            act :: Expr -> WalkResult
+            act (Var x) = do c <- get
+                             return (if x < c then Var x else Var (x + s))
+            act e = return e
+
+--- Substitution ---
+
+subst :: Index -> Expr -> Expr -> Expr
+subst v e e' = let Right res = walk act e' 0 in res -- it can only be Right
+    where
+      act :: Expr -> WalkResult
+      act (Var x) = do c <- get
+                       return (if x == (c + v) then (shift c e)
+                               else (Var x))
+      act e = return e
+
+
 
 --- Closure Conversion ---
 
