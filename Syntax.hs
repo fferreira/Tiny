@@ -1,8 +1,6 @@
 module Syntax where
 
-import Data.List(delete, deleteBy)
-import Char(ord, chr)
-import Control.Monad.State(State, StateT, evalState, evalStateT, put, get, modify, gets)
+import Control.Monad.State(State, StateT, evalState, evalStateT, put, get, modify)
 import Control.Monad.Error(ErrorT, throwError, runErrorT)
 
 --- De Bruijn indices ---
@@ -28,6 +26,7 @@ data Expr =
 
 --- Some examples ---
 
+id_function :: Expr
 id_function = (Fn 1 (Var 0))
 
 sample = App id_function [Value (Num 14)]
@@ -202,3 +201,4 @@ cc_act e = return e
 
 cc :: Expr -> Expr
 cc e = let Right res = walk cc_act e 0 in res -- it can only be Right
+
