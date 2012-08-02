@@ -19,7 +19,7 @@ data Expr =
   | App Expr [Expr]
   | Fn Index Expr -- bad code smell should be the number of vars
   | Var Index
-  | Def Expr
+  | Let Expr Expr
   | Seq Expr Expr
   | Clo Ctx Expr -- for closure conversion
   deriving (Eq, Show)
@@ -31,19 +31,19 @@ id_function = (Fn 1 (Var 0))
 
 sample = App id_function [Value (Num 14)]
 
-sample2 = Seq (Def id_function) (App (Var 0) [Value (Num 42)])
+sample2 = Let id_function (App (Var 0) [Value (Num 42)])
 
 f2 = (Fn 2 (Var 0))
 
 sample3 = App f2 [Value (Num 14), Value (Num 15)]
 
-sample4 = Seq (Def f2) (App (Var 0) [Value (Num 42), Value (Num 43)])
+sample4 = Let f2 (App (Var 0) [Value (Num 42), Value (Num 43)])
 
-partial_app = Seq (Def (Fn 2 (Pair (Var 0) (Var 1))))
+partial_app = Let (Fn 2 (Pair (Var 0) (Var 1)))
               (App (Var 0) [Value (Num 14)])
 
-curried = Seq (Def (Fn 2 (Pair (Var 0) (Var 1))))
-        (App (App (Var 0) [Value (Num 14)]) [Value (Num 42)])
+curried = Let (Fn 2 (Pair (Var 0) (Var 1)))
+          (App (App (Var 0) [Value (Num 14)]) [Value (Num 42)])
 
 --- The evaluator ---
 
@@ -87,10 +87,10 @@ eval_act (App f params) = do
       apply_fn (Clo n (Fn n' b)) p =
               throwError "Too many parameters for closure application"
       apply_fn _ _ = throwError "Applying something that is not a function"
-eval_act (Def e) = do
-  e' <- eval_act e
+eval_act (Let e1 e2) = do
+  e' <- eval_act e1
   modify (\c -> e':c)
-  return e'
+  eval_act e2
 eval_act (Seq e1 e2) = do
   eval_act e1 ; eval_act e2
 eval_act (Clo c' e) = do
@@ -117,7 +117,7 @@ free_act (App f params) = do ff <- free_act f
 free_act (Fn n b) = do c <- get ; modify (\c -> c + n) 
                        free_act b
 free_act (Var v) = do c <- get ; return (if v >= c then [v - c] else [])
-free_act (Def e) = do f <- free_act e ; modify (\c -> c + 1) ; return f
+free_act (Let e1 e2) = do f <- free_act e1 ; modify (\c -> c + 1) ; free_act e2
 free_act (Seq e1 e2) = do f1 <- free_act e1 ; f2 <- free_act e2 ; return (f1 ++ f2)
 free_act (Clo c' e) = do modify (\c -> c + (length c')) ; free_act e
 
@@ -143,10 +143,10 @@ walker f (Fn n b) = do c <- get ; modify (\c -> c + n)
                        b' <- f b ; put c
                        f (Fn n b')
 walker f v@(Var x) = f v
-walker f (Def e) = do e' <- f e 
-                      r <- f (Def e')
-                      modify (\c -> c + 1) 
-                      return r
+walker f (Let e1 e2) = do e1' <- f e1
+                          modify (\c -> c + 1)
+                          e2' <- f e2
+                          f (Let e1' e2')
 walker f (Seq e1 e2) = do e1' <- f e1 ; e2' <- f e2 ; f (Seq e1' e2')
 walker f (Clo c' e2) = do c <- get ; modify (\c -> c + (length c'))
                           e2' <- f e2 ; put c ; f (Clo c' e2') -- put?
