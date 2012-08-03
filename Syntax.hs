@@ -18,32 +18,32 @@ data Expr =
   | Snd Expr
   | App Expr [Expr]
   | Fn Index Expr -- bad code smell should be the number of vars
-  | Var Index
+  | Idx Index
   | Let Expr Expr
   | Seq Expr Expr
-  | Clo Ctx Expr -- for closure conversion
+  | Clo [Expr] Expr -- for closure conversion
   deriving (Eq, Show)
 
 --- Some examples ---
 
 id_function :: Expr
-id_function = (Fn 1 (Var 0))
+id_function = (Fn 1 (Idx 0))
 
 sample = App id_function [Value (Num 14)]
 
-sample2 = Let id_function (App (Var 0) [Value (Num 42)])
+sample2 = Let id_function (App (Idx 0) [Value (Num 42)])
 
-f2 = (Fn 2 (Var 0))
+f2 = (Fn 2 (Idx 0))
 
 sample3 = App f2 [Value (Num 14), Value (Num 15)]
 
-sample4 = Let f2 (App (Var 0) [Value (Num 42), Value (Num 43)])
+sample4 = Let f2 (App (Idx 0) [Value (Num 42), Value (Num 43)])
 
-partial_app = Let (Fn 2 (Pair (Var 0) (Var 1)))
-              (App (Var 0) [Value (Num 14)])
+partial_app = Let (Fn 2 (Pair (Idx 0) (Idx 1)))
+              (App (Idx 0) [Value (Num 14)])
 
-curried = Let (Fn 2 (Pair (Var 0) (Var 1)))
-          (App (App (Var 0) [Value (Num 14)]) [Value (Num 42)])
+curried = Let (Fn 2 (Pair (Idx 0) (Idx 1)))
+          (App (App (Idx 0) [Value (Num 14)]) [Value (Num 42)])
 
 --- The evaluator ---
 
@@ -64,7 +64,7 @@ eval_act (Fst e) = do e' <- eval_act e
 eval_act (Snd e) = do e' <- eval_act e
                       case e' of Pair _ e2 -> return e2
                                  _ -> throwError "Snd of something other than a pair"
-eval_act (Var x) = do c <- get 
+eval_act (Idx x) = do c <- get 
                       if x < (length c) then return (c !! x)
                       else throwError "Invalid variable" 
 eval_act (App f params) = do
@@ -116,7 +116,7 @@ free_act (App f params) = do ff <- free_act f
                              return (ff ++ concat fp)
 free_act (Fn n b) = do c <- get ; modify (\c -> c + n) 
                        free_act b
-free_act (Var v) = do c <- get ; return (if v >= c then [v - c] else [])
+free_act (Idx v) = do c <- get ; return (if v >= c then [v - c] else [])
 free_act (Let e1 e2) = do f <- free_act e1 ; modify (\c -> c + 1) ; free_act e2
 free_act (Seq e1 e2) = do f1 <- free_act e1 ; f2 <- free_act e2 ; return (f1 ++ f2)
 free_act (Clo c' e) = do modify (\c -> c + (length c')) ; free_act e
@@ -142,7 +142,7 @@ walker f (App e1 e2) = do e1' <- f e1;
 walker f (Fn n b) = do c <- get ; modify (\c -> c + n) 
                        b' <- f b ; put c
                        f (Fn n b')
-walker f v@(Var x) = f v
+walker f v@(Idx x) = f v
 walker f (Let e1 e2) = do e1' <- f e1
                           modify (\c -> c + 1)
                           e2' <- f e2
@@ -165,8 +165,8 @@ shift s e =
       res -- it can only be Right
           where
             act :: Expr -> WalkResult
-            act (Var x) = do c <- get
-                             return (if x < c then Var x else Var (x + s))
+            act (Idx x) = do c <- get
+                             return (if x < c then Idx x else Idx (x + s))
             act e = return e
 
 --- Substitution ---
@@ -175,9 +175,9 @@ subst :: Index -> Expr -> Expr -> Expr
 subst v e e' = let Right res = walk act e' 0 in res -- it can only be Right
     where
       act :: Expr -> WalkResult
-      act (Var x) = do c <- get
+      act (Idx x) = do c <- get
                        return (if x == (c + v) then (shift c e)
-                               else (Var x))
+                               else (Idx x))
       act e = return e
 
 -- WARNING THIS IS NOT A SIMULTANEAOUS SUBST
@@ -194,7 +194,7 @@ cc_act f@(Fn n b) =
                              (zip  (take num_fv [0..]) fv)
                              (shift num_fv b))))
         where
-          fv = map (\x -> (Var x)) (free f)
+          fv = map (\x -> (Idx x)) (free f)
           num_fv = length fv
 cc_act e = return e
 
