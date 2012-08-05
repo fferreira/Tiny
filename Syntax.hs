@@ -1,6 +1,7 @@
 module Syntax where
 
 import Data.Char(ord, chr)
+import Data.List((\\))
 import Control.Monad.State(State, StateT, evalState, evalStateT, put, get, modify)
 import Control.Monad.Error(ErrorT, throwError, runErrorT)
 
@@ -53,30 +54,31 @@ id_function = (Fn 1 (Idx 0))
 
 sample = App id_function [Value (Num 14)]
 
-sample2 = Let id_function (App (Idx 0) [Value (Num 42)])
+sample2 = Let  (N "x") id_function (App (Var (N "x")) [Value (Num 42)])
 
 f2 = (Fn 2 (Idx 0))
 
 sample3 = App f2 [Value (Num 14), Value (Num 15)]
 
-sample4 = Let f2 (App (Idx 0) [Value (Num 42), Value (Num 43)])
+sample4 = Let (N "x") f2 (App (Var (N "x")) [Value (Num 42), Value (Num 43)])
 
-partial_app = Let (Fn 2 (Pair (Idx 0) (Idx 1)))
-              (App (Idx 0) [Value (Num 14)])
+partial_app = Let (N "x") (Fn 2 (Pair (Idx 0) (Idx 1)))
+              (App (Var (N "x")) [Value (Num 14)])
 
-curried = Let (Fn 2 (Pair (Idx 0) (Idx 1)))
-          (App (App (Idx 0) [Value (Num 14)]) [Value (Num 42)])
+curried = Let (N "x") (Fn 2 (Pair (Idx 0) (Idx 1)))
+          (App (App (Var (N "x")) [Value (Num 14)]) [Value (Num 42)])
 
 --- The evaluator ---
 
-type Ctx a = ([(a, Expr a)], [Expr a]) -- TODO use a record?
+-- type Ctx a = ([(a, Expr a)], [Expr a]) -- TODO use a record?
 
--- get index context from contexts
-ic :: Ctx a -> [Expr a]
-ic = snd
+data Ctxs a = C {nc :: [(a, Expr a)], ic :: [Expr a]}
+
+empty_ctx :: Ctxs a
+empty_ctx = C {nc = [], ic = []}
 
 type WithError = ErrorT String IO
-type EvalResult a = StateT (Ctx a) WithError (Expr a)
+type EvalResult a = StateT (Ctxs a) WithError (Expr a)
 
 eval_act :: Name a => Expr a -> EvalResult a
 eval_act v@(Value _) = return v
@@ -93,14 +95,17 @@ eval_act (Snd e) = do e' <- eval_act e
 eval_act (Idx x) = do c <- get 
                       if x < (length (ic c)) then return ((ic c) !! x)
                       else throwError "Invalid index" 
+eval_act (Var n) = do c <- get
+                      case lookup n (nc c) of Just e -> return e
+                                              _ -> throwError "Invalid variable"
 eval_act (App f params) = do
   params' <- mapM eval_act params
   f' <- eval_act f
   apply_fn f' params'
     where 
-      apply_fn (Fn n b) p | n == length p  = 
+      apply_fn (Fn n b) p | n == length p  =
                           do
-                            c <- get ; modify (\(nc, dc) -> (nc, p ++ dc)) 
+                            c <- get ; modify (\c -> c {ic = (p ++ ic c)})
                             r <- eval_act b ; put c ; return r
       apply_fn (Fn n b) p | n > length p  = 
                           return $ Clo p (Fn n b)
@@ -115,12 +120,12 @@ eval_act (App f params) = do
       apply_fn _ _ = throwError "Applying something that is not a function"
 eval_act (Let n e1 e2) = do
   e' <- eval_act e1
-  modify (\(nc, dc) -> ((n, e'):nc, dc))
+  modify (\c -> c {nc = (n, e'):(nc c)})
   eval_act e2
 eval_act (Seq e1 e2) = do
   eval_act e1 ; eval_act e2
 eval_act (Clo c' e) = do
-  c <- get ; modify (\(nc, dc) -> (nc, c' ++ dc))
+  c <- get ; modify (\c -> c {ic = (c' ++ ic c)})
   res <- eval_act e ; put c
   return res
 
@@ -130,29 +135,34 @@ eval c e = do
 
 --- Free variables ---
 
-type FreeResult = State Index [Index]
+data FreeVar a = F {name :: [a], index :: [Index]}
+none = F {name = [], index = []}
 
-free_act :: (Expr a) -> State Index [Index]
-free_act v@(Value _) = return []
-free_act (Pair e1 e2) = do f1 <- free_act e1 ; f2 <- free_act e2 ; return (f1 ++ f2)
+type FreeResult a = State Index (FreeVar a)
+
+free_act :: Name a => Expr a -> FreeResult a
+free_act v@(Value _) = return none
+free_act (Pair e1 e2) = do f1 <- free_act e1 ; f2 <- free_act e2 ; return (f1 `plus` f2)
 free_act (Fst e) = free_act e
 free_act (Snd e) = free_act e
 free_act (App f params) = do ff <- free_act f
                              fp <- mapM free_act params
-                             return (ff ++ concat fp)
+                             return (ff `plus` (foldr plus none fp))
 free_act (Fn n b) = do c <- get ; modify (\c -> c + n) 
                        free_act b
-free_act (Idx v) = do c <- get ; return (if v >= c then [v - c] else [])
--- TODO V FIX!
-free_act (Let n e1 e2) = do f <- free_act e1 ; modify (\c -> c + 1) ; free_act e2
-free_act (Seq e1 e2) = do f1 <- free_act e1 ; f2 <- free_act e2 ; return (f1 ++ f2)
+free_act (Idx v) = do c <- get ; return (if v >= c then none { index = [v - c]} else none)
+free_act (Var n) = return (none {name = [n]})                      
+free_act (Let n e1 e2) = do f <- free_act e1 ; f' <- free_act e2
+                            return (f `plus` (f' {name = name f' \\ [n]}))
+free_act (Seq e1 e2) = do f1 <- free_act e1 ; f2 <- free_act e2 ; return (f1 `plus` f2)
 free_act (Clo c' e) = do modify (\c -> c + (length c')) ; free_act e
 
 free e = evalState (free_act e) 0
 
+plus n n' = F {name = (name n ++ name n'), index = (index n ++ index n')}
+
 --- Tree walk with context length ---
 
--- TODO add named variables
 type WalkResult a = StateT Index (Either String) (Expr a)
 
 walker :: Name a => (Expr a -> WalkResult a) -> Expr a -> WalkResult a
@@ -167,19 +177,19 @@ walker f (Snd e) = do e' <- f e
 walker f (App e1 e2) = do e1' <- f e1; 
                           e2' <- mapM f e2; 
                           f (App e1' e2')
-walker f (Fn n b) = do c <- get ; modify (\c -> c + n) 
-                       b' <- f b ; put c
-                       f (Fn n b')
-walker f v@(Idx x) = f v
-walker f (Let n e1 e2) = do e1' <- f e1
-                            modify (\c -> c + 1)
-                            e2' <- f e2
-                            f (Let n e1' e2')
+-- walker f (Fn n b) = do c <- get ; modify (\c -> c + n) 
+--                        b' <- f b ; put c
+--                        f (Fn n b')
+walker f v@(Idx _) = f v
+walker f v@(Var _) = f v
+-- walker f (Let n e1 e2) = do e1' <- f e1
+--                             modify (\c -> c + 1)
+--                             e2' <- f e2
+--                             f (Let n e1' e2')
 walker f (Seq e1 e2) = do e1' <- f e1 ; e2' <- f e2 ; f (Seq e1' e2')
-walker f (Clo c' e2) = do c <- get ; modify (\c -> c + (length c'))
-                          e2' <- f e2 ; put c ; f (Clo c' e2') -- put?
+-- walker f (Clo c' e2) = do c <- get ; modify (\c -> c + (length c'))
+--                           e2' <- f e2 ; put c ; f (Clo c' e2') -- put?
 
-id_action e = return e
 
 walk action e c = evalStateT (walker action e) c --TODO missing one action overall?
 
@@ -214,18 +224,18 @@ subst_many [] e = e
 
 --- Closure Conversion ---
 
-cc_act :: Name a => Expr a -> WalkResult a
-cc_act f@(Fn n b) | free f == [] = return f
-cc_act f@(Fn n b) = 
-    return (Clo fv (Fn (n + num_fv) (subst_many
-                             (zip  (take num_fv [0..]) fv)
-                             (shift num_fv b))))
-        where
-          fv = map (\x -> (Idx x)) (free f)
-          num_fv = length fv
-cc_act e = return e
+-- cc_act :: Name a => Expr a -> WalkResult a
+-- cc_act f@(Fn n b) | free f == [] = return f
+-- cc_act f@(Fn n b) = 
+--     return (Clo fv (Fn (n + num_fv) (subst_many
+--                              (zip  (take num_fv [0..]) fv)
+--                              (shift num_fv b))))
+--         where
+--           fv = map (\x -> (Idx x)) (free f)
+--           num_fv = length fv
+-- cc_act e = return e
 
 
-cc :: Name a => Expr a -> Expr a
-cc e = let Right res = walk cc_act e 0 in res -- it can only be Right
+-- cc :: Name a => Expr a -> Expr a
+-- cc e = let Right res = walk cc_act e 0 in res -- it can only be Right
 
